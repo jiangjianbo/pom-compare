@@ -1,0 +1,679 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>pom diff</title>
+    <meta name="keywords" content="maven, pom, compare, diff" />
+    <meta name="description" content="compare and diff maven pom.xml" />
+    <script type="text/javascript">
+        ///////////////////////////////// 基础函数区 ///////////////////////////////////////////
+        /*
+            code from: http://chamcon.iteye.com/blog/2039119  http://blog.sina.com.cn/s/blog_771875550101drnl.html
+        */
+        function loadXML(xmlFile){  
+            var xmlDoc=null;  
+            //判断浏览器的类型  
+            //支持IE浏览器  
+            if(!window.DOMParser && window.ActiveXObject){  
+                var xmlDomVersions = ['MSXML.2.DOMDocument.6.0','MSXML.2.DOMDocument.3.0','Microsoft.XMLDOM'];  
+                for(var i=0;i<xmlDomVersions.length;i++){  
+                    try{  
+                        xmlDoc = new ActiveXObject(xmlDomVersions[i]);  
+                        break;  
+                    }catch(e){  
+                    }  
+                }  
+            }  
+            //支持Mozilla浏览器  
+            else if(document.implementation && document.implementation.createDocument){  
+                try{  
+                    /* document.implementation.createDocument('','',null); 方法的三个参数说明 
+                     * 第一个参数是包含文档所使用的命名空间URI的字符串；  
+                     * 第二个参数是包含文档根元素名称的字符串；  
+                     * 第三个参数是要创建的文档类型（也称为doctype） 
+                     */  
+                    xmlDoc = document.implementation.createDocument('','',null);  
+                }catch(e){  
+                }  
+            }  
+            else{
+                //Google Chrome  
+                try 
+                {  
+                    var xmlhttp = new window.XMLHttpRequest();  
+                    xmlhttp.open("GET",file,false);  
+                    xmlhttp.send(null);  
+                    xmlDoc = xmlhttp.responseXML.documentElement;  
+                }  
+                catch(e)  
+                {  
+                    alert("您的浏览器不能正常加载文件。请切换到兼容模式，或者更换浏览器"); 
+                }  
+            }  
+      
+            if(xmlDoc!=null){  
+                xmlDoc.async = false;  
+                xmlDoc.load(xmlFile);  
+            }  
+            return xmlDoc;  
+        }  // loadXml
+            
+        
+        function loadXMLStr(xmlString){  
+            var xmlDoc=null;  
+            //判断浏览器的类型  
+            //支持IE浏览器   
+            if(!window.DOMParser && window.ActiveXObject){   //window.DOMParser 判断是否是非ie浏览器  
+                var xmlDomVersions = ['MSXML.2.DOMDocument.6.0','MSXML.2.DOMDocument.3.0','Microsoft.XMLDOM'];  
+                for(var i=0;i<xmlDomVersions.length;i++){  
+                    try{  
+                        xmlDoc = new ActiveXObject(xmlDomVersions[i]);  
+                        xmlDoc.async = false;  
+                        xmlDoc.loadXML(xmlString); //loadXML方法载入xml字符串  
+                        break;  
+                    }
+                    catch(e){  
+                    }  
+                }  
+            }  
+            //支持Mozilla浏览器  
+            else if(window.DOMParser){  
+                try{  
+                    /* DOMParser 对象解析 XML 文本并返回一个 XML Document 对象。 
+                    * 要使用 DOMParser，使用不带参数的构造函数来实例化它，然后调用其 parseFromString() 方法 
+                    * parseFromString(text, contentType) 参数text:要解析的 XML 标记 参数contentType文本的内容类型 
+                    * 可能是 "text/xml" 、"application/xml" 或 "application/xhtml+xml" 中的一个。注意，不支持 "text/html"。 
+                    */  
+                    domParser = new DOMParser();  
+                    xmlDoc = domParser.parseFromString(xmlString, 'text/xml');  
+                }catch(e){  
+                }  
+            }  
+            else{  
+                return null;  
+            }  
+            
+            return xmlDoc;  
+        } // loadXmlStr             
+            
+            
+        function checkSum(texts){
+            var sum = 0;
+            for(var i = 0; i < texts.length; ++i){
+                sum += texts.charCodeAt(i); 
+                if( sum > 2000000000 ) sum %= 2000000000;
+            }
+            return sum;  
+        }
+            
+        // 字符串比较大小
+        function strCompare(v1, v2){
+            if( v1 == v2 ) return 0;
+            else if( v1 == null || v1 < v2 ) return -1;
+            else if( v2 == null || v1 > v2 ) return 1;
+            else return 0;
+        }
+        
+        // 多属性比较大小
+        // v1, v2 要比较的对象
+        // attrs：要依次比较的对象属性数组
+        function locationCompare(v1, v2, attrs){
+            var r1 = 0;
+            return eachArray(attrs, function(attr){
+                r1 = strCompare(v1[attr], v2[attr]);
+                if( r1 != 0 )
+                    return r1; 
+            });
+        }
+        
+        // 遍历每一个数组元素
+        // arr: 要遍历的数组
+        // callback(item, itemIndex)： 回调的函数
+        function eachArray(arr, callback){
+            if( arr == null || callback == null )
+                return null;
+                
+            for(var i = 0; i < arr.length; ++i){
+                var rrr = callback(arr[i], i);
+                if( null != rrr )
+                    return rrr;
+            }
+            return null;   
+        }            
+            
+        // 获取对象的属性
+        // obj：要获取的对象
+        // attrs：要获取对象的层次属性
+        // defVal：如果无值，则返回默认值
+        function getProperty(obj, attrs, defVal){
+           // 层层递归取属性值
+            var props = obj;
+            if( attrs != null )
+                eachArray(attrs, function(attr){
+                    props = props == null? null: props[attr];    
+                });
+            return props || defVal;
+        }
+            
+        // 查找数组的对应值的位置，找到则返回数组下标，否则-1
+        // arr: 要查找的数组
+        // val: 要查找的值
+        // compare(v1, v2): 比较函数，相等则返回true 
+        function indexOfArray(arr, val, compare){
+            if( arr == null || arr.length == 0 || val == null ) return -1;
+            compare = compare != null? compare : function(v1,v2){return v1 == v2;};
+            var pos = -1;
+            pos = eachArray(arr, function(item, idx){
+                if( compare(item, val) )
+                    return idx;    
+            });    
+            return pos == null? -1: pos;
+        }
+            
+        function extractFileName(file){
+            var pos = Math.max(file.lastIndexOf("\\"), file.lastIndexOf("/"));
+            return file.substr(pos+1);
+        }
+            
+    </script>
+            
+            
+            
+    <script type="text/javascript">
+        ///////////////////////////////// 界面基础函数区 ///////////////////////////////////////////
+            
+        function getChildElem(parentElem, tagname){
+            return eachChild(parentElem, function(node, idx){
+                if( node.tagName == tagname )
+                    return node;
+            });
+        }
+        
+        function eachChild(parentElem, callback){
+            if( parentElem == null || callback == null )
+                return null;
+                
+            return eachArray(parentElem.childNodes, callback);
+        }
+        
+        // 创建界面元素，并返回对象
+        // parentElem, 父节点
+        // elemType,  元素的类型，tagName
+        // elemText,  元素包含的文本内容
+        // attrs：元素的其他属性
+        function createElement(parentElem, elemType, elemText, attrs){
+            var elem = document.createElement(elemType);
+            if( attrs != null ){
+                for(var attrname in attrs)
+                    elem[attrname] = attrs[attrname];
+            }
+            if( elemText != null ){
+                elem.innerText = elemText;
+            }
+            
+            if( parentElem != null ){
+                var pelem = parentElem;
+                if( typeof(parentElem) == "string" )
+                    pelem = document.getElementById(parentElem);
+                if( pelem != null )
+                    pelem.appendChild(elem);
+            }
+            return elem;
+        }
+        
+        // 删除节点的所有子元素
+        function clearChildren(node) {
+            while( node.lastChild != null ){
+                node.removeChild(node.lastChild);
+            }
+        }
+        
+        
+        
+              
+    </script>
+            
+    <script type="text/javascript">
+        ///////////////////////////////// 变量定义区 ///////////////////////////////////////////
+        
+        // 存放解析的pom文件内容
+        // filename: {file: "", text: "", xml: ""}
+        var pomFiles = {};
+        
+        function getPomFile(fileid){ return pomFiles[fileid]; }
+            
+        // 存放界面显示的pomid数组
+        var activedPomIds = [];
+            
+    </script>
+            
+    <script type="text/javascript">
+        ///////////////////////////////// 业务规则定义区 ///////////////////////////////////////////
+        function contentAsId(filename, content){
+            var theId = "id-" + extractFileName(filename); 
+            theId = theId + (content == null? "" : "-" + content.length);
+            theId = theId + checkSum(content);
+            return theId;
+        }
+        
+        
+        function getPomViewPage(fileid){ return document.getElementById(getPomViewPageId(fileid)); }
+        
+        function getPomViewPageId(fileid) { return "pg-" + fileid; }
+        
+        function fileNameAsId(file){
+            return extractFileName(file);   
+        }
+        
+    </script>
+            
+            
+    <script type="text/javascript">
+        ///////////////////////////////// 业务逻辑区 ///////////////////////////////////////////
+            
+        
+        
+        function loadContents(fileid, filename, texts) {
+            var pom = pomFiles[fileid];
+            var dat;
+            if( pom == null ){
+                dat = {fileid: fileid, filename: filename, text: null, xml: null};
+            }
+            else{
+                dat = pom;
+            }
+            
+            dat.text = texts;
+            dat.xml = loadXMLStr(texts);
+            dat.pom = parsePom(dat.xml);
+            
+            pomFiles[fileid] = dat;
+            
+            flushPomList();
+        }
+
+        function parsePom(xmldoc){
+            //所有数组都要排序，其中dependency按照groupId-artifactId-version-type-scope
+            var pom = {pom: null, parentPom: null, dependencyManagement: [], dependency: [], pluginManagement: [], plugin: [], properties: [], modules:[]};
+            var proj = xmldoc.getElementsByTagName("project");
+            if( proj == null || proj.length == 0 )
+                return null;
+            proj = proj[0];
+            pom.pom = getXmlElementValue(proj, [], null, ["groupId", "artifactId", "version"]);
+            pom.parentPom = getXmlElementValue(proj, ["parent"], null, ["groupId", "artifactId", "version", "relativePath"]);
+
+            pom.dependencyManagement = getXmlElementValue(proj
+                                                        , ["dependencyManagement", "dependencies"]
+                                                        , ["dependency"], ["groupId", "artifactId", "version", "type", "scope"])
+                                                        .sort(function(v1,v2){
+                                                            return locationCompare(v1, v2, ["groupId", "artifactId", "version", "type", "scope"] );
+                                                            });
+            pom.dependency = getXmlElementValue(proj, ["dependencies"], ["dependency"], ["groupId", "artifactId", "version", "type", "scope"])
+                                                        .sort(function(v1,v2){
+                                                            return locationCompare(v1, v2, ["groupId", "artifactId", "version", "type", "scope"] );
+                                                            });
+            
+            pom.pluginManagement = getXmlElementValue(proj, ["build", "pluginManagement", "plugins"], ["plugin"], ["groupId", "artifactId", "version"])
+                                                        .sort(function(v1,v2){
+                                                            return locationCompare(v1, v2, ["groupId", "artifactId", "version"] );
+                                                            });
+            pom.plugin = getXmlElementValue(proj, ["build", "plugins"], ["plugin"], ["groupId", "artifactId", "version"])
+                                                        .sort(function(v1,v2){
+                                                            return locationCompare(v1, v2, ["groupId", "artifactId", "version"] );
+                                                            });
+
+            pom.properties = getXmlElementValue(proj, ["properties"], [], []).sort(function(v1,v2){
+                                                            return locationCompare(v1, v2, ["key"] );
+                                                            });
+            pom.modules = getXmlElementValue(proj, ["modules"], [], []).sort(function(v1,v2){
+                                                            return locationCompare(v1, v2, ["key"] );
+                                                            });
+            
+            return pom;
+        }
+        
+        // parentElem : 开始查找的节点，如果null返回null
+        // nestElems: 层层进入的子节点，允许为null
+        // returnElems： 返回的节点名称列表，作为数组的元素，
+        //               如果null则返回把所有子元素设为属性构成的对象，
+        //               如果为空数组则返回所有子元素构成的数组{key:nodeTag,value:text}
+        // elemAttrs：数组元素包含的属性，如果null则包含所有属性，如果为空[]则包含returnElem本身
+        // return array
+        function getXmlElementValue(parentElem, nestElems, returnElems, elemAttrs){
+            if( parentElem == null ) // 根节点为null则返回null
+                return null;
+            var pelem = parentElem;
+            if( nestElems != null && nestElems.length > 0 ) // 嵌套进入
+                for(var i = 0; i < nestElems.length; ++i)
+                    pelem = getChildElem(pelem, nestElems[i]);
+                    
+            if( pelem == null )
+                return [];
+           
+            var returns = [];
+            // 将元素的子元素作为属性加入到obj中
+            var makeElem = function(obj, elem){
+                eachChild(elem, function(node){
+                    if( node.tagName != null && (elemAttrs == null || indexOfArray(elemAttrs, node.tagName) != -1) )
+                        obj[node.tagName] = node.text || node.textContent;
+                });
+            };
+            // 抽取公共处理函数
+            var makeElemArray = function(elem){
+                    var obj = {};
+                    makeElem(obj, elem);
+                    returns.push(obj);
+                };
+                
+            if( returnElems == null ){
+                // 如果null则返回把所有子元素设为属性构成的对象
+                var obj = {};
+                makeElem(obj, pelem);
+                return obj;
+            }
+            else if( returnElems.length == 0 ){
+                // 如果为空数组则返回所有子元素构成的数组{key:nodeTag,value:text}  
+                eachChild(pelem, function(elem){
+                    if( elem.tagName != null )
+                        returns.push({key: elem.tagName, value:(elem.text || elem.textContent)});    
+                }); 
+            }
+            else{
+                // 提取所有匹配的节点，然后将这些节点的子元素作为数组元素对象
+                eachArray(returnElems, function(elemTag){
+                    eachArray(pelem.getElementsByTagName(elemTag), makeElemArray);
+                });
+            }
+            return returns;
+        }
+        
+
+        
+        function removePom(fileid){
+            var list = document.getElementById("pom-list-items");
+            var chkbox = document.getElementById(fileid);
+            var item = chkbox.parentNode;
+            list.removeChild(item);
+            delete pomFiles[fileid];
+        }
+        
+        // 打开选项卡，显示pom内容并激活比较，会导致所有的打开的pom都比较一次
+        function activePom(fileid, active){
+            var pos = indexOfArray(activedPomIds, fileid);
+            var containor = document.getElementById("pom-slides-containor");
+            if( active ){ // 如果要激活，则要不存在
+                if( pos == -1 ){
+                    activedPomIds.push(fileid); 
+                    // 创建页面
+                    var pg = createElement(containor, "div", null, {id: getPomViewPageId(fileid), className: "pom"});
+                    // 重新比较一次
+                    var w = comparePoms(activedPomIds);
+                    containor.style.width = w + "px";
+                }
+            }
+            else{// 如果要取消激活,则首先要存在
+                if( pos != -1 ){
+                    activedPomIds.splice(pos, 1);
+                    containor.removeChild(getPomViewPage(fileid));
+                    // 重新比较一次
+                    var w = comparePoms(activedPomIds);
+                    containor.style.width = w + "px";
+                }
+            }
+        }
+        
+        
+        // 比较列表中的pomid，并且生成比较的视图。返回总的宽度px
+        function comparePoms(pomids){
+            var pages = [], poms = [];
+            eachArray(pomids, function(pid){
+                pages.push(getPomViewPage(pid));    
+                poms.push(getPomFile(pid));
+            });
+            
+            eachArray(pages, function(page){ clearChildren(page); });
+            // 先比较parent
+            eachArray(pages, function(page, idx){
+                var pom = poms[idx].pom.parentPom || {groupId:"", arifactId:"", version:"", relativePath:""};
+                createElement(page, "h2", "Parent:", {className: ""});    
+                createElement(page, "div", [pom.groupId, pom.artifactId, pom.version].join(":"), {className: "diff"});    
+            });
+            // 显示 本pom信息
+            eachArray(pages, function(page, idx){
+                var pom = poms[idx].pom.pom || {groupId:"", arifactId:"", version:"", type:""};
+                createElement(page, "h2", "POM:", {className: ""});    
+                createElement(page, "div", [pom.groupId, pom.artifactId, pom.version, pom.type].join(":"), {className: "diff"});    
+            });
+
+            compareAndView(pages, poms, ["pom", "properties"]
+                    , function(obj){return obj.key;}
+                    , function(page){createElement(page, "h2", "Properties:");}
+                    , function(page, indexName, obj, cssName, lineNo){
+                        createElement(page, "div", [indexName, (obj||{}).value||"" ].join("="), {className: "line " + cssName + (lineNo%2==1? " odd": "")});
+                    });
+            // 显示 dependencies
+            var depIndexs = {};
+            compareAndView(pages, poms, ["pom", "dependency"]
+                    , function(obj){
+                            var key = [obj.groupId, obj.artifactId,null].join(":");
+                            depIndexs[key] = (depIndexs[key]||0) + 1;
+                            return [obj.groupId, obj.artifactId, obj.version, obj.type, obj.scope].join(":");
+                        }
+                    , function(page){createElement(page, "h2", "Dependencies:");}
+                    , function(page, indexName, obj, cssName, lineNo){
+                        createElement(page, "div", indexName, {className: "line " + cssName + (lineNo%2==1? " odd": "")});
+                    });
+            
+            // 显示 plugins
+            var plugIndexs = {};
+            compareAndView(pages, poms, ["pom", "plugin"]
+                    , function(obj){
+                            var key = [obj.groupId, obj.artifactId,null].join(":");
+                            plugIndexs[key] = (plugIndexs[key]||0) + 1;
+                            return [obj.groupId, obj.artifactId, obj.version].join(":");
+                        }
+                    , function(page){createElement(page, "h2", "Plugins:");}
+                    , function(page, indexName, obj, cssName, lineNo){
+                        createElement(page, "div", indexName, {className: "line " + cssName + (lineNo%2==1? " odd": "")});
+                    });
+            
+            // 显示 dependencyManagement
+            compareAndView(pages, poms, ["pom", "dependencyManagement"]
+                    , function(obj){return [obj.groupId, obj.artifactId, obj.version, obj.type, obj.scope].join(":");}
+                    , function(page){createElement(page, "h2", "DependMan:");}
+                    , function(page, indexName, obj, cssName, lineNo){
+                        var key = obj == null? "": [obj.groupId, obj.artifactId,null].join(":");
+                        var attach = depIndexs[key] != null? "(" + depIndexs[key] + ")" : "";
+                        createElement(page, "div", indexName + attach, {className: "line " + cssName + (lineNo%2==1? " odd": "")});
+                    });
+            
+            // 显示 pluginManagement
+            compareAndView(pages, poms, ["pom", "pluginManagement"]
+                    , function(obj){return [obj.groupId, obj.artifactId, obj.version].join(":");}
+                    , function(page){createElement(page, "h2", "PluginMan:");}
+                    , function(page, indexName, obj, cssName, lineNo){
+                        var key = obj == null? "": [obj.groupId, obj.artifactId,null].join(":");
+                        var attach = plugIndexs[key] != null? "(" + plugIndexs[key] + ")" : "";
+                        createElement(page, "div", indexName + attach, {className: "line " + cssName + (lineNo%2==1? " odd": "")});
+                    });
+            
+            // 显示 module
+            compareAndView(pages, poms, ["pom", "modules"]
+                    , function(obj){return obj.value;}
+                    , function(page){createElement(page, "h2", "Modules:");}
+                    , function(page, indexName, obj, cssName, lineNo){
+                        createElement(page, "div", (obj||{}).value||"" , {className: "line " + cssName + (lineNo%2==1? " odd": "")});
+                    });
+                    
+            // 计算总的宽度
+            var totalWidth = 0;
+            eachArray(pages, function(page){ totalWidth += page.offsetWidth; });
+                    
+            return totalWidth + pages.length * 100; // 加上修正值
+        }
+        
+        
+        // 比较所有的pom并生成显示结果
+        // pages: 包含各个显示内容的界面元素数组
+        // poms: 包含pom信息的数组
+        // nestAttrs: 层次递归获取数据的数组
+        // fnIndexKey(obj): 根据对象生成唯一的索引 key
+        // fnCreateTitle(page)：生成比较栏目的标题元素
+        // fnElement(page, indexName, obj, cssName, lineNo)： 创建元素
+        // 返回索引计数对象
+        function compareAndView(pages, poms, nestAttrs, fnIndexKey, fnCreateTitle, fnElement){
+            // 显示 properties，首先建立索引
+            var indexs = {}; // "value": count
+            var indexNames = [];
+            eachArray(pages, function(page, idx){
+                // 层层递归取属性值
+                var props = getProperty(poms[idx], nestAttrs, []);
+                eachArray(props, function(prop){
+                    //建立索引
+                    var key = fnIndexKey(prop);
+                    indexs[key] = (indexs[key] || 0) + 1;
+                    // 不能重复加
+                    if( indexs[key] == 1 )
+                        indexNames.push(key);
+                });
+            });
+            // 索引排序
+            indexNames.sort();
+            eachArray(indexNames, function(name, nameidx){
+                eachArray(pages, function(page, idx){
+                    if( nameidx == 0 ) // 创建标题
+                        fnCreateTitle(page);
+                    var props = getProperty(poms[idx], nestAttrs, []);
+                    // 判断页面属性里是否包含
+                    var pos = indexOfArray(props, name, function(obj, prop){return fnIndexKey(obj) == prop;});
+                    var count = indexs[name];
+                    var cssName = count == pages.length? "same" : (pos != -1? (count == 1? "more": "diff") : "lost");
+                    //createElement(page, "p", [name, (pos != -1? props[pos].value: "")].join("="), {className: cssName});
+                    fnElement(page, name, (pos != -1? props[pos]: null), cssName, nameidx);
+                });
+            });
+            return indexs;
+        }
+        
+        
+        
+        function flushPomList(){
+            clearPomList();
+            addSelAllPom();
+            for(var fileid in pomFiles){
+                addPomListItem(fileid, pomFiles[fileid].filename, -1 != indexOfArray(activedPomIds, fileid));
+            }
+        }
+       
+        function clearPomList(){
+            var list = document.getElementById("pom-list-items");
+            clearChildren(list);
+        }
+        
+        function addSelAllPom(){
+            var list = document.getElementById("pom-list-items");
+            var item = createElement(list, "span", null, {className: "pom-list-item"});
+            var chkbox = createElement(item, "input", null, {type:"checkbox", value: 1, id: "pom-sel-all"});
+            var label = createElement(item, "label", "选择全部", {htmlFor: "pom-sel-all"});
+
+            chkbox.addEventListener('click', function(){
+                for(var fileid in pomFiles){
+                    document.getElementById(fileid).checked = chkbox.checked;
+                    activePom(fileid, chkbox.checked);
+                }
+            }, false);
+        }
+        
+        function addPomListItem(fileid, filename, checked){
+            var list = document.getElementById("pom-list-items");
+            var item = createElement(list, "span", null, {className: "pom-list-item"});
+            var chkbox = createElement(item, "input", null, {type:"checkbox", value: fileid, id: fileid});
+            var label = createElement(item, "label", extractFileName(filename) + "(" + fileid + ")", {htmlFor: fileid});
+            var btn = createElement(item, "button", "X");
+
+            chkbox.checked = checked;
+
+            btn.addEventListener('click', function(){removePom(fileid);}, false);
+            chkbox.addEventListener('click', function(){activePom(fileid, chkbox.checked);}, false);
+        }
+        
+    </script>
+    
+    
+    
+    <style type="text/css">
+        html{ height:100%; margin:0; }
+        body { height:100%; margin:0; }
+        div { border:0px black solid; }
+        
+        #topbar {position:absolute; left: 0px; top: 0px; height:50px;}
+        #content {padding-top:50px;}
+        #pom-list { border:1px black solid;}
+        .pom-list-item {float:left; clear:none; display:inline-block; margin-right:10px;}
+        #pom-slides {border:1px black solid;}
+        #pom-slider-scroll {overflow: auto;}
+        #pom-slides-containor {}
+        div.odd {background-color: lightgrey;}
+        div.pom {float: left; margin-right: 5px; border:1px blue solid;}
+        .same {color: green;}
+        .lost {color: grey;}
+        .more {color: black;}
+        .diff {color: red; }
+    </style>
+</head>
+<body>
+    <div id="topbar">
+        <span>POM Diff&Merge</span>
+        <span>
+            <input type="file" id="file-input" />
+        </span>
+    </div>
+    <div id="content">
+        <fieldset id="pom-list">
+            <legend>POM files</legend>
+            <div id="pom-list-items">
+                <!--
+                <span class="pom-list-item"><input id="aa" type="checkbox"><label for="aa">aaa</label></span>
+                -->
+            </div>
+        </fieldset>
+        <fieldset id="pom-slides">
+            <legend>POM Compare</legend>
+            <div id="pom-slider-scroll">
+                <div id="pom-slides-containor">
+                    <!--
+                    <div id="pg-xxx1" class="pom" ></div>
+                    <div id="pg-xxx2" class="pom" ></div>
+                    -->
+                </div>
+                
+            </div>
+            
+        </fieldset>
+        
+    </div>
+    <script type="text/javascript">
+        ///////////////////////////////// 界面事件区 ///////////////////////////////////////////
+            
+        // code from : http://stackoverflow.com/questions/7346563/loading-local-json-file
+        // http://stackoverflow.com/questions/3582671/how-to-open-a-local-disk-file-with-javascript
+        function readSingleFile(e) {
+            var file = e.target.files[0];
+            if (!file) {
+                return;
+            }
+            var filename = e.target.value;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var contents = e.target.result;
+                var fileid = contentAsId(filename, contents);
+                loadContents(fileid, filename, contents);
+            };
+            reader.readAsText(file, "UTF8");
+        }
+        
+            
+        document.getElementById('file-input').addEventListener('change', readSingleFile, false);
+    </script>
+</body>
+</html>
